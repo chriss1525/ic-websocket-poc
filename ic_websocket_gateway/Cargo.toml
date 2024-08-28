@@ -8,6 +8,7 @@ ezsockets = { version = "0.4", features = ["tungstenite"] }
 async-trait = "0.1.52"
 candid = "0.8.3"
 ic-agent = "0.23.2"
+# ic-agent = { version = "0.23.2", features = ["rustls"] }
 ic-cdk = "0.7.4"
 ic-cdk-macros = "0.6.10"
 serde = "1.0.147"
@@ -17,3 +18,8 @@ ring = "0.16"
 serde_bytes = "0.11"
 tungstenite = "0.16.0"
 ed25519-compact = "2"
+# reqwest = { version = "0.11", features = ["rustls-tls"] }
+# reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls-native-roots"] }
+rustls = "0.20"
+webpki-roots = "0.22.3"

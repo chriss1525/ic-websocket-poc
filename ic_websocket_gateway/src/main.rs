@@ -3,6 +3,7 @@ use candid::CandidType;
 use ed25519_compact::Signature;
 use ezsockets::{Error, Server, Socket};
 use ic_agent::{export::Principal, identity::BasicIdentity, Agent};
+use rustls::ClientConfig;
 use serde::{Deserialize, Serialize};
 use serde_cbor::{from_slice, to_vec};
 use std::{
@@ -11,6 +12,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use webpki_roots;
 
 mod canister_methods;
 
@@ -47,7 +49,8 @@ struct GatewaySession {
     id: SessionID,
     handle: Session,
     server_handle: Server<GatewayServer>,
-    agent: Agent,
+
+    agent: Agent, // Agent is created here
 
     canister_connected: bool,
     client_id: Option<u64>,
@@ -146,7 +149,9 @@ impl CanisterPoller {
     async fn run_polling(&self) {
         println!("Start of polling.");
         let can_map = Arc::clone(&self.canister_client_session_map);
-        let agent = canister_methods::get_new_agent(URL, self.identity.clone(), FETCH_KEY).await;
+
+        let agent =
+            canister_methods::get_new_agent(URL, Arc::clone(&self.identity), FETCH_KEY, None).await;
         let canister_id = Principal::from_text(&self.canister_id).unwrap();
         tokio::spawn({
             let interval = Duration::from_millis(200);
@@ -207,7 +212,8 @@ struct GatewayServer {
     connected_canisters: HashMap<String, CanisterPoller>,
     identity: Arc<BasicIdentity>,
     close_args: HashMap<SessionID, ClientCanisterId>,
-    agent: Agent,
+
+    agent: Agent, // Agent is created here
 }
 
 #[async_trait]
@@ -224,7 +230,9 @@ impl ezsockets::ServerExt for GatewayServer {
         let id = self.next_session_id;
         self.next_session_id += 1;
         println!("Client connected.");
-        let agent = canister_methods::get_new_agent(URL, self.identity.clone(), FETCH_KEY).await;
+
+        let agent =
+            canister_methods::get_new_agent(URL, self.identity.clone(), FETCH_KEY, None).await; // Agent is created here
 
         let session = Session::create(
             |handle| GatewaySession {
@@ -248,10 +256,23 @@ impl ezsockets::ServerExt for GatewayServer {
         &mut self,
         id: <Self::Session as ezsockets::SessionExt>::ID,
     ) -> Result<(), Error> {
-        let close_args = self.close_args.remove(&id).unwrap();
-        println!("Websocket with client #{} closed.", close_args.client_id);
-        let canister_id = Principal::from_text(&close_args.canister_id).unwrap();
-        canister_methods::ws_close(&self.agent, &canister_id, close_args.client_id).await;
+        match self.close_args.remove(&id) {
+            Some(close_args) => {
+                println!("Websocket with client #{} closed.", close_args.client_id);
+                match Principal::from_text(&close_args.canister_id) {
+                    Ok(canister_id) => {
+                        canister_methods::ws_close(&self.agent, &canister_id, close_args.client_id)
+                            .await;
+                    }
+                    Err(e) => {
+                        println!("Error parsing canister ID: {}", e);
+                    }
+                }
+            }
+            None => {
+                println!("No close arguments found for session ID: {}", id);
+            }
+        }
         Ok(())
     }
 
@@ -299,7 +320,24 @@ async fn main() {
             .expect("Could not read the key pair."),
     );
     let identity = Arc::new(identity);
-    let agent = canister_methods::get_new_agent(URL, identity.clone(), FETCH_KEY).await;
+
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+        rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+            ta.subject,
+            ta.spki,
+            ta.name_constraints,
+        )
+    }));
+
+    let tls_config = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    // Update the agent creation line
+    let agent =
+        canister_methods::get_new_agent(URL, identity.clone(), FETCH_KEY, Some(tls_config)).await;
     agent.fetch_root_key().await.unwrap();
 
     let (server, _) = Server::create(|handle| GatewayServer {

@@ -5,6 +5,8 @@ use ic_agent::{
     agent::http_transport::ReqwestHttpReplicaV2Transport, export::Principal,
     identity::BasicIdentity, Agent,
 };
+use reqwest::Client;
+use rustls::ClientConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -35,13 +37,51 @@ pub struct CertMessages {
     pub tree: Vec<u8>,
 }
 
-pub async fn get_new_agent(url: &str, identity: Arc<BasicIdentity>, fetch_key: bool) -> Agent {
-    let transport = ReqwestHttpReplicaV2Transport::create(url.to_string()).unwrap();
+// pub async fn get_new_agent(
+//     url: &str,
+//     identity: Arc<BasicIdentity>,
+//     fetch_key: bool,
+//     tls_config: Option<ClientConfig>,
+// ) -> Agent {
+//     let client = if let Some(config) = tls_config {
+//         Client::builder()
+//             .use_preconfigured_tls(config)
+//             .build()
+//             .unwrap()
+//     } else {
+//         Client::new()
+//     };
+
+//     let transport =
+//         ReqwestHttpReplicaV2Transport::create_with_client(url.to_string(), client).unwrap();
+//     let agent = Agent::builder()
+//         .with_transport(transport)
+//         .with_arc_identity(identity)
+//         .build()
+//         .unwrap();
+
+//     if fetch_key {
+//         agent.fetch_root_key().await.unwrap();
+//     }
+//     agent
+// }
+
+pub async fn get_new_agent(
+    url: &str,
+    identity: Arc<BasicIdentity>,
+    fetch_key: bool,
+    tls_config: Option<ClientConfig>,
+) -> Agent {
+    let client = Client::builder().use_rustls_tls().build().unwrap();
+
+    let transport =
+        ReqwestHttpReplicaV2Transport::create_with_client(url.to_string(), client).unwrap();
     let agent = Agent::builder()
         .with_transport(transport)
         .with_arc_identity(identity)
         .build()
         .unwrap();
+
     if fetch_key {
         agent.fetch_root_key().await.unwrap();
     }
